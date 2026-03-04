@@ -1,69 +1,89 @@
-
+import { MAX_PINS_PER_FRAME, TOTAL_FRAMES } from "./domain/constants";
+import { LastFrame } from "./domain/frames/LastFrame";
+import { RegularFrame } from "./domain/frames/RegularFrame";
+import { BowlingFrame } from "./domain/frames/BowlingFrame";
 
 export class BowlingGame {
-	scores: number[] = []
+	private readonly frames: BowlingFrame[];
+	private currentFrameIndex = 0;
 
-	constructor(private splitFrames: (scores: number[]) => number[][]) { }
-
-	totalScore(): number {
-		const frames = this.splitFrames(this.scores);
-		
-		if (frames.length === 0) {
-			return 0;
-		}
-
-		let totalScore = 0;
-		
-		for (let frameIndex = 0; frameIndex < frames.length; frameIndex++) {
-			const frame = frames[frameIndex];
-			const isLastFrame = frameIndex === 9;
-			
-			// First, add the base score of the frame
-			const frameBaseScore = frame.reduce((sum, score) => sum + score, 0);
-			totalScore += frameBaseScore;
-			
-			// Handle strike bonus (not for the last frame)
-			if (!isLastFrame && frame.length === 1 && frame[0] === 10) {
-				// It's a strike, add bonus from next two rolls
-				totalScore += this.getNextTwoBallsAfterFrame(frames, frameIndex);
-			}
-			// Handle spare bonus (not for the last frame)
-			else if (!isLastFrame && frame.length === 2 && frame[0] + frame[1] === 10) {
-				// It's a spare, add bonus from next roll
-				totalScore += this.getNextBallAfterFrame(frames, frameIndex);
-			}
-		}
-		
-		return totalScore;
+	constructor() {
+		this.frames = this.createFrames();
 	}
-	
-	private getNextBallAfterFrame(frames: number[][], frameIndex: number): number {
-		const nextFrameIndex = frameIndex + 1;
-		
-		if (nextFrameIndex < frames.length) {
-			return frames[nextFrameIndex][0];
+
+	roll(pins: number): void {
+		this.ensurePinsAreValid(pins);
+
+		const frame = this.currentFrame();
+		if (!frame) {
+			throw new Error("Game is already complete");
 		}
-		
-		return 0;
+
+		frame.addRoll(pins);
+		this.advanceFrameIfComplete();
 	}
-	
-	private getNextTwoBallsAfterFrame(frames: number[][], frameIndex: number): number {
-		const nextFrameIndex = frameIndex + 1;
-		
-		if (nextFrameIndex >= frames.length) {
-			return 0;
+
+	score(): number {
+		const allRolls = this.flattenedRolls();
+		let total = 0;
+		let rollCursor = 0;
+
+		for (const frame of this.frames) {
+			total += this.scoreFrame(frame, allRolls, rollCursor);
+			rollCursor += frame.consumedRollsForScoring();
 		}
-		
-		const nextFrame = frames[nextFrameIndex];
-		
-		// If next frame is a strike and not the last frame
-		if (nextFrame.length === 1 && nextFrame[0] === 10 && nextFrameIndex < 9) {
-			// We need the strike + first ball of the frame after
-			return 10 + this.getNextBallAfterFrame(frames, nextFrameIndex);
-		} 
-		// Otherwise use the first two balls of next frame (or just what's available)
-		else {
-			return nextFrame[0] + (nextFrame.length > 1 ? nextFrame[1] : 0);
+
+		return total;
+	}
+
+	private createFrames(): BowlingFrame[] {
+		const regularFrames = Array.from({ length: TOTAL_FRAMES - 1 }, () => new RegularFrame());
+		return [...regularFrames, new LastFrame()];
+	}
+
+	private ensurePinsAreValid(pins: number): void {
+		if (!Number.isInteger(pins)) {
+			throw new Error("Pins must be an integer");
 		}
+
+		if (pins < 0 || pins > MAX_PINS_PER_FRAME) {
+			throw new Error("Pins must be between 0 and 10");
+		}
+	}
+
+	private currentFrame(): BowlingFrame | undefined {
+		return this.frames[this.currentFrameIndex];
+	}
+
+	private advanceFrameIfComplete(): void {
+		const frame = this.currentFrame();
+		if (frame?.isComplete()) {
+			this.currentFrameIndex += 1;
+		}
+	}
+
+	private flattenedRolls(): number[] {
+		return this.frames.flatMap((frame) => frame.allRolls());
+	}
+
+	private scoreFrame(frame: BowlingFrame, rolls: readonly number[], rollCursor: number): number {
+		if (frame.isStrike()) {
+			return MAX_PINS_PER_FRAME + this.sumNextRolls(rolls, rollCursor + 1, 2);
+		}
+
+		if (frame.isSpare()) {
+			return MAX_PINS_PER_FRAME + this.sumNextRolls(rolls, rollCursor + 2, 1);
+		}
+
+		return frame.baseScore();
+	}
+
+	private sumNextRolls(rolls: readonly number[], startIndex: number, count: number): number {
+		let total = 0;
+		for (let i = 0; i < count; i++) {
+			total += rolls[startIndex + i] ?? 0;
+		}
+
+		return total;
 	}
 }
